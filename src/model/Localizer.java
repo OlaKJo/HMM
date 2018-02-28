@@ -4,6 +4,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
+import org.apache.commons.math3.linear.BlockRealMatrix;
+import org.apache.commons.math3.linear.DiagonalMatrix;
+import org.apache.commons.math3.linear.RealMatrix;
 
 import control.EstimatorInterface;
 
@@ -15,8 +18,10 @@ public class Localizer implements EstimatorInterface {
 	private Random rand;
 	private List<Tuple> closestN;
 	private List<Tuple> farthestN;
-	private int heading;
-	private double[][] alpha;
+	private Heading heading;
+	private double[] alpha;
+	private double[][] T;
+	private double[][] bigO;
 
 	public Localizer( int rows, int cols, int head) {
 		this.rows = rows;
@@ -29,14 +34,25 @@ public class Localizer implements EstimatorInterface {
 		rand = new Random();
 		truePos.setX(rand.nextInt(rows));
 		truePos.setY(rand.nextInt(cols));
-		heading = 1;
-		alpha = new double[rows][cols];
+		heading = Heading.North;
+		alpha = new double[rows*cols*head];
 		double val = 1.0/(rows*cols);
-		double[] tempArr = new double[cols];
-		Arrays.fill(tempArr, val);
-		Arrays.fill(alpha, tempArr);
+		Arrays.fill(alpha, val);
+		T = new double[rows*cols*head][rows*cols*head];
+		bigO = new double[rows*cols+1][rows*cols*head];
+		generateT();
+		generateBigO();
 	}	
 	
+	private void generateBigO() {
+		for (int x = 0; x < (rows); x++) {
+			for (int y = 0; y < cols; y++) {
+				bigO [rows*x + y] = getEmissProb(x, y);
+			}
+		}
+		bigO[bigO.length-1] = getEmissProb(-1, -1);
+	}
+
 	public int getNumRows() {
 		return rows;
 	}
@@ -49,11 +65,13 @@ public class Localizer implements EstimatorInterface {
 		return head;
 	}
 	
-	public double getTProb( int x, int y, int h, int nX, int nY, int nH) {
-		return getTransProb(x, y, nX, nY, h);
+	public double getTProb( int xt_minus1, int yt_minus1, int ht_minus1, int xt, int yt, int ht) {
+		return T[4*cols*xt_minus1+4*yt_minus1+ht_minus1][4*cols*xt+4*yt+ht];
+
 	}
 
 	public double getOrXY( int rX, int rY, int x, int y, int h) {
+		//Implement this!
 		return 0.1;
 	}
 
@@ -68,14 +86,18 @@ public class Localizer implements EstimatorInterface {
 
 
 	public double getCurrentProb( int x, int y) {
-		return alpha[x][y];
+		double sum = 0;
+		for(int i = 0; i < 4; i++) {
+			sum += alpha[x*rows*4 + y*4 + i];
+		}
+		return sum;
 	}
 	
 	public void update() {
 		move();
 		updateNeighbors();
 		updateSensedPos();
-		updateProb();
+		alpha = updateProb(alpha, sensePos.getX(), sensePos.getY());
 	}
 	
 	private void updateNeighbors() {
@@ -124,77 +146,36 @@ public class Localizer implements EstimatorInterface {
 		}
 	}
 	
-	private void updateProb(){
-		//double[][] emissMat = getEmissProb(sensePos[0], sensePos[1]);
-		// System.out.println(getTransProb(2,2,2,3,1));
-		double[][] newAlpha = new double[rows][cols];
-		double[][] S = new double[rows][cols];
-		double[][] E = new double[rows][cols];
-		//loops x_t
-		for(int m = 0; m < rows; m++) {
-			for(int n = 0; n < cols; n++) {
-				double sum = 0;
-				
-				//loops x_tminus1
-				for(int i = 0; i < rows; i++) {
-					for(int j = 0; j < cols; j++) {
-						sum += getTransProb(i,j,m,n, heading)*alpha[i][j];
-					}
-				}
-				S[m][n] = sum;
-			}
+	private double[] updateProb(double[] localAlpha, int sX, int sY){
+		RealMatrix newAlpha = new BlockRealMatrix(localAlpha.length, 1);
+
+		RealMatrix realAlpha = new BlockRealMatrix(new double[][] {localAlpha});
+		realAlpha = realAlpha.transpose();
+		
+		RealMatrix realT = new BlockRealMatrix(T);
+		RealMatrix realO;
+		if(sX == -1) {
+			realO = new DiagonalMatrix(bigO[bigO.length - 1]);
+		} else {
+			realO = new DiagonalMatrix(bigO[rows*sX + sY]);
 		}
 		
-		E = getEmissProb(sensePos.getX(), sensePos.getY());
+		newAlpha = realO.multiply(realT.transpose()).multiply(realAlpha);
 		
-		double runningSum = 0;
-		for(int m = 0; m < rows; m++) {
-			for(int n = 0; n < cols; n++) {
-				newAlpha[m][n] = S[m][n]*E[m][n];
-				runningSum += newAlpha[m][n];
-			}
-		}
 		
-		for(int m = 0; m < rows; m++) {
-			for(int n = 0; n < cols; n++) {
-				newAlpha[m][n] = newAlpha[m][n]/runningSum;
-			}
-		}
+		realAlpha = newAlpha.transpose().scalarMultiply(1/newAlpha.getNorm());
+		localAlpha = realAlpha.getData()[0];
 		
-		alpha = newAlpha;
+		return localAlpha;
+		
 	}
 	
-	private double getTransProb(int x_tminus1, int y_tminus1, int x_t, int y_t, int heading){
-//		double[][] transMat = new double[alpha.length][alpha[0].length];
-//		
-//		for (int i = 0; i < alpha.length; i++) {
-//			for (int j = 0; j < alpha[0].length; j++) {
-//				transMat[i][j] = 0;
-//			}
-//		}
-//		
-//		float pot = 1;
-//		List<Tuple> PathsFromX_tminus1 = getXYNeighbors(x_tminus1, y_tminus1);
-//		
-//		Tuple nextInHeading = nextForwardPos(x_tminus1, y_tminus1, heading);
-//		
-//		if(PathsFromX_tminus1.contains(nextInHeading)) {
-//			transMat[nextInHeading.getX()][nextInHeading.getY()] = 0.7;
-//			pot -= 0.7;
-//			PathsFromX_tminus1.remove(nextInHeading);
-//		}
-//		
-//		float remPot = pot/PathsFromX_tminus1.size();
-//		
-//		for (Tuple x : PathsFromX_tminus1) {
-//			transMat[x.getX()][x.getY()] = remPot;
-//		}
-//		
-//		return transMat;
+	private double getTransProb(int x_tminus1, int y_tminus1, Heading heading_tminus1, int x_t, int y_t, Heading heading_t){
 		
 		List<Tuple> PathsFromX_tminus1 = getXYNeighbors(x_tminus1, y_tminus1);
 		Tuple xt = new Tuple(x_t, y_t);
-		Tuple nextInHeading = nextForwardPos(x_tminus1, y_tminus1, heading);
+		Tuple xtminus1 = new Tuple(x_tminus1, y_tminus1);
+		Tuple nextInHeading = nextForwardPos(x_tminus1, y_tminus1, heading_tminus1);
 		
 		double pot = 1;
 		
@@ -203,29 +184,72 @@ public class Localizer implements EstimatorInterface {
 			PathsFromX_tminus1.remove(nextInHeading);
 		}
 		
-		if(xt.equals(nextInHeading)) {
+		if(xt.equals(nextInHeading) && heading_tminus1 == heading_t) {
 			return 0.7;
 		}
 		
-		return pot/PathsFromX_tminus1.size();
+		if(PathsFromX_tminus1.contains(xt) && headingFromTo(xtminus1, xt).equals(heading_t))
+			return pot/PathsFromX_tminus1.size();
+		
+		return 0;
 		
 	}
 	
-	private Tuple nextForwardPos(int x, int y, int heading) {
+	private Heading headingFromTo(Tuple xtminus1, Tuple xt) {
+		int xDiff = xt.getX() - xtminus1.getX();
+		int yDiff = xt.getY() - xtminus1.getY();
+		
+		if(xDiff > 0) {
+			return Heading.South;
+		} else if(xDiff < 0) {
+			return Heading.North;
+		} else if(yDiff > 0) {
+			return Heading.East;
+		} else{
+			return Heading.West;
+		}
+	}
+
+	private void generateT() {
+		int j = 0;
+		int i = 0;
+		
+		for (int xRow = 0; xRow < rows; xRow++) {
+			for (int yRow = 0; yRow < cols; yRow++) {
+				for(int dirRow = 0; dirRow < 4; dirRow++) {
+					
+					
+					for (int xCol = 0; xCol < rows; xCol++) {
+						for (int yCol = 0; yCol < cols; yCol++) {
+							for(int dirCol = 0; dirCol < 4; dirCol++) {
+								
+								T[i][j] = getTransProb(xRow, yRow, Heading.values()[dirRow], xCol, yCol, Heading.values()[dirCol]);
+								j++;
+							}
+						}
+					}
+					i++;
+					j = 0;
+				}
+			}
+		}
+	}
+	
+	private Tuple nextForwardPos(int x, int y, Heading heading) {
 		switch (heading) {
-		case 0:
+		case East:
 		// moving right
 			y++;
 			break;
-		case 1:
+		case South:
 		//moving down
 			x++;
 			break;
-		case 2:
+		case West:
 		//moving left
 			y--;
 			break;
-		case 3:
+		case North:
 		//moving up
 			x--;
 			break;
@@ -246,37 +270,47 @@ public class Localizer implements EstimatorInterface {
 		return retList;
 	}
 
-	private double[][] getEmissProb(int senseX, int senseY){
-		double[][] emissMat = new double[alpha.length][alpha[0].length];
-		for (int i = 0; i < alpha.length; i++) {
-			for (int j = 0; j < alpha[0].length; j++) {
-				if(senseX == i && senseY == j){
-					 emissMat[i][j] = 0.1;
+	private double[] getEmissProb(int senseX, int senseY){
+		double[] emissVec = new double[alpha.length];
+		
+		for (int x = 0; x < rows; x++) {
+			for (int y = 0; y < cols; y++) {
+				if(senseX == x && senseY == y){
+					for (int h = 0; h < head; h++) {
+						emissVec[x*cols*4 + 4*y + h] = 0.1;
+					}
 					 continue;
 				 }
-				if(senseX != -1 && Math.hypot(senseX-i, senseY-j) > Math.sqrt(8)) {
-					emissMat[i][j] = 0;
+				if(senseX != -1 && Math.hypot(senseX-x, senseY-y) > Math.sqrt(8)) {
+					for (int h = 0; h < head; h++) {
+						emissVec[x*cols*4 + 4*y + h] = 0;
+					}
 					continue;
 				}
-				 List<List<Tuple>> neighbors = getXNeighbors(i, j);
+				 List<List<Tuple>> neighbors = getXNeighbors(x, y);
 				 List<Tuple> closest = neighbors.get(0);
 				 List<Tuple> farthest = neighbors.get(1);
-				 
-				 if(senseX!=-1){
-					 System.out.println("");
-				 }
+				
 				 Tuple sensed = new Tuple(senseX, senseY);
 				 if(closest.contains(sensed)){
-					 emissMat[i][j] = 0.05;
+					 for (int h = 0; h < head; h++) {
+							emissVec[x*cols*4 + 4*y + h] = 0.05;
+						}
 				 }else if(farthest.contains(sensed)){
-					 emissMat[i][j] = 0.025;
+					 for (int h = 0; h < head; h++) {
+							emissVec[x*cols*4 + 4*y + h] = 0.025;
+						}
 				 }else{
-					 emissMat[i][j] = 1  - (0.1 + 0.05*closest.size() + 0.025*farthest.size());
+					 double remainder =  1  - (0.1 + 0.05*closest.size() + 0.025*farthest.size());
+					 for (int h = 0; h < head; h++) {
+							emissVec[x*cols*4 + 4*y + h] = remainder;
+						}
+					
 				 }
 			}
 		}
 		
-		return emissMat;
+		return emissVec;
 	}
 
 	private List<List<Tuple>> getXNeighbors(int x, int y) {
@@ -308,44 +342,44 @@ public class Localizer implements EstimatorInterface {
 			heading = calculateNextHeading();
 		
 		switch (heading) {
-			case 0:
+			case North:
 			// moving right
+				truePos.addX(-1);
+				break;
+			case East:
+			//moving down
 				truePos.addY(1);
 				break;
-			case 1:
-			//moving down
+			case South:
+			//moving left
 				truePos.addX(1);
 				break;
-			case 2:
-			//moving left
-				truePos.addY(-1);
-				break;
-			case 3:
+			case West:
 			//moving up
-				truePos.addX(-1);
+				truePos.addY(-1);
 				break;
 		}
 	}
 
-	private boolean checkWallInCurrHeading(int heading) {
+	private boolean checkWallInCurrHeading(Heading heading) {
 		
 		switch (heading) {
-		case 0:
+		case East:
 		// moving right
 			if (truePos.getY() + 1 > cols - 1)
 				return true;
 			break;
-		case 1:
+		case South:
 		//moving down
 			if (truePos.getX() + 1 > rows - 1)
 				return true;
 			break;
-		case 2:
+		case West:
 		//moving left
 			if (truePos.getY() - 1 < 0)
 				return true;
 			break;
-		case 3:
+		case North:
 		//moving up
 			if (truePos.getX() - 1 < 0)
 				return true;
@@ -355,12 +389,12 @@ public class Localizer implements EstimatorInterface {
 		
 	}
 
-	private int calculateNextHeading() {
-		int nextHeading = heading;
+	private Heading calculateNextHeading() {
+		Heading nextHeading = heading;
 		
 		float randDir = rand.nextFloat();
 		if (randDir < 0.3) {
-				nextHeading = rand.nextInt(4);		
+				nextHeading = Heading.values()[rand.nextInt(4)];		
 		}
 		if(checkWallInCurrHeading(nextHeading)) {
 			return calculateNextHeading();

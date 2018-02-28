@@ -1,10 +1,11 @@
 package model;
 
 public enum Heading {
-    East (0),
-    South (1),
-    West (2),
-    North (3);
+	North (0),
+	East (1),
+    South (2),
+    West (3);
+    
 
     private final int value;
     
