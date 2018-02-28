@@ -288,13 +288,7 @@ public class RobotLocalizationViewer {
 					s = String.format("%.3f", loc.getOrXY( sXCount, sYCount, x, y, h));
 					states[x][y][h].setText( s);
 				}
-				
-					
-				System.out.print(s + ", ");
-				
 			}
-			System.out.println(";");
-
 		}	
 		
 		if( sXCount >=0 && sYCount>=0)

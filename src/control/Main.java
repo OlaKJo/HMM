@@ -1,6 +1,7 @@
 package control;
 
 import model.Localizer;
+import model.Robot;
 import view.RobotLocalizationViewer;
 
 public class Main {
@@ -9,13 +10,20 @@ public class Main {
 	 * ...
 	 */
 	
+	final static int ROWS = 10;
+	final static int COLS = 10;
+	final static int HEAD = 4;
+	
 	public static void main( String[] args) {
+				
+		Robot marvin = new Robot(ROWS, COLS, HEAD);
 		
 		/*
 		 * generate you own localiser / estimator wrapper here to plug it into the 
 		 * graphics class.
 		 */
-		EstimatorInterface localizer = new Localizer( 10, 10, 4);
+
+		EstimatorInterface localizer = new Localizer(ROWS, COLS, HEAD, marvin);
 
 		RobotLocalizationViewer viewer = new RobotLocalizationViewer( localizer);
 

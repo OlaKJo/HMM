@@ -3,66 +3,44 @@ package model;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Random;
 import org.apache.commons.math3.linear.BlockRealMatrix;
 import org.apache.commons.math3.linear.DiagonalMatrix;
 import org.apache.commons.math3.linear.RealMatrix;
-
 import control.EstimatorInterface;
+
 
 public class Localizer implements EstimatorInterface {
 		
 	private int rows, cols, head;
-	//private int[] truePos, sensePos;
-	private Tuple truePos, sensePos;
-	private Random rand;
-	private List<Tuple> closestN;
-	private List<Tuple> farthestN;
-	private Heading heading;
+	private Tuple sensePos;
+	
 	private double[] alpha;
 	private double[][] T;
 	private double[][] bigO;
-	private double[][] bigAlpha;
+	private Robot marvin;
 
-	public Localizer( int rows, int cols, int head) {
+	/**
+	 * Class which uses HMM and forward filtering to estimate the position of a Robot object in a world of size rows x cols.
+	 * @param rows
+	 * @param cols
+	 * @param head
+	 * @param m
+	 */
+	public Localizer( int rows, int cols, int head, Robot m) {
 		this.rows = rows;
 		this.cols = cols;
 		this.head = head;
-		truePos = new Tuple(0, 0); 
-		sensePos = new Tuple(0, 0);
-		closestN = new ArrayList<Tuple>();
-		farthestN = new ArrayList<Tuple>();
-		rand = new Random();
-		truePos.setX(rand.nextInt(rows));
-		truePos.setY(rand.nextInt(cols));
-		heading = Heading.North;
-		alpha = new double[rows*cols*head];
-		double val = 1.0/(rows*cols);
-		Arrays.fill(alpha, val);
-		T = new double[rows*cols*head][rows*cols*head];
-		bigO = new double[rows*cols+1][rows*cols*head];
+		marvin = m;
+		
+		initialize();
 		generateT();
 		generateBigO();
 	}	
 	
-	private void generateBigAlpha() {
-		// TODO Auto-generated method stub
-		
-	}
-
-	private void generateBigO() {
-		for (int x = 0; x < (rows); x++) {
-			for (int y = 0; y < cols; y++) {
-				bigO [rows*x + y] = getEmissProb(x, y);
-			}
-		}
-		bigO[bigO.length-1] = getEmissProb(-1, -1);
-	}
-
 	public int getNumRows() {
 		return rows;
 	}
-	
+
 	public int getNumCols() {
 		return cols;
 	}
@@ -82,11 +60,13 @@ public class Localizer implements EstimatorInterface {
 
 
 	public int[] getCurrentTruePosition() {
-		return truePos.getPos();
+		Tuple t =  marvin.getTruePos();
+		return new int[] {t.getX(), t.getY()};
 	}
 
 	public int[] getCurrentReading() {
-		return sensePos.getPos();
+		Tuple t =  marvin.getSensedPos();
+		return new int[] {t.getX(), t.getY()};
 	}
 
 
@@ -99,62 +79,53 @@ public class Localizer implements EstimatorInterface {
 	}
 	
 	public void update() {
-		move();
-		updateNeighbors();
-		updateSensedPos();
-		alpha = updateProb(alpha, sensePos.getX(), sensePos.getY());
+		sensePos = marvin.update();
+		alpha = updateAlphaProb(alpha, sensePos.getX(), sensePos.getY());
 	}
 	
-	private void updateNeighbors() {
-		closestN.clear();
-		farthestN.clear();
-		for (int i = -2; i <= 2; i++) {
-			for (int j = -2; j <= 2; j++) {
-				if (i == 0 && j == 0)
-					continue;
-				int xInd = truePos.getX() + i;
-				int yInd = truePos.getY() + j;
-				
-				if (xInd >= 0 && yInd >= 0 && xInd < rows && yInd < cols) {
-					Tuple n = new Tuple(xInd, yInd);
-					if (Math.hypot(truePos.getX()-xInd, truePos.getY()-yInd) < 2) {
-						closestN.add(n);
-					} else {
-						farthestN.add(n);
-					}
-				}
+	/**
+	 * initialize the alpha matrix to an even probability dist for the first step
+	 * set the sizes of the transition matrix and the collection of diagonal matrices in bigO
+	 */
+	private void initialize() {
+		alpha = new double[rows*cols*head];
+		double val = 1.0/(rows*cols);
+		Arrays.fill(alpha, val);
+		
+		T = new double[rows*cols*head][rows*cols*head];
+		bigO = new double[rows*cols+1][rows*cols*head];		
+	}
+
+
+	/**
+	 * Calculate all the emission probibilities, the diagonal matrices, and save the values as rows in bigO
+	 */
+	private void generateBigO() {
+		for (int x = 0; x < (rows); x++) {
+			for (int y = 0; y < cols; y++) {
+				bigO [rows*x + y] = getEmissProb(x, y);
 			}
 		}
-		System.out.println("Closest Neighbors");
-		for(Tuple t : closestN) {
-			System.out.println(t);
-		}
-		System.out.println("Farthest Neighbors");
-		for(Tuple t : farthestN) {
-			System.out.println(t);
-		}
+		bigO[bigO.length-1] = getEmissProb(-1, -1);
 	}
 
-	private void updateSensedPos() {
-		float sensorRand = rand.nextFloat();
-		
-		if (sensorRand < 0.1) {
-			sensePos.setPos(truePos);
-		} else if (sensorRand < (0.05*closestN.size() + 0.1)) {
-			int index = rand.nextInt(closestN.size());
-			sensePos.setPos(closestN.get(index));
-		} else if (sensorRand < (0.025*farthestN.size() + 0.05*closestN.size() + 0.1)) {
-			int index = rand.nextInt(farthestN.size());
-			sensePos.setPos(farthestN.get(index));
-		} else {
-			sensePos.setPos(-1,-1);
-		}
-	}
-	
-	private double[] updateProb(double[] localAlpha, int sX, int sY){
+	/**
+	 * Implementation of Forward filtering HMM using 
+	 * ft = norm_factor*O*T_transpose*ftminus1
+	 * ft = newAlpha
+	 * ftminus1 = realAlpha
+	 * O = realO
+	 * T_transpose = realT
+	 * 
+	 * @param localAlpha
+	 * @param sX
+	 * @param sY
+	 * @return
+	 */
+	private double[] updateAlphaProb(double[] localAlpha, int sX, int sY){
 		RealMatrix newAlpha = new BlockRealMatrix(localAlpha.length, 1);
-
 		RealMatrix realAlpha = new BlockRealMatrix(new double[][] {localAlpha});
+		
 		realAlpha = realAlpha.transpose();
 		
 		RealMatrix realT = new BlockRealMatrix(T);
@@ -175,8 +146,17 @@ public class Localizer implements EstimatorInterface {
 		
 	}
 	
+	/**
+	 * return the probability of moving from (x_tminus1, y_tminus1) in headin_tminus1, and ending up in (x_t, y_t) in heading_t
+	 * @param x_tminus1
+	 * @param y_tminus1
+	 * @param heading_tminus1
+	 * @param x_t
+	 * @param y_t
+	 * @param heading_t
+	 * @return
+	 */
 	private double getTransProb(int x_tminus1, int y_tminus1, Heading heading_tminus1, int x_t, int y_t, Heading heading_t){
-		
 		List<Tuple> PathsFromX_tminus1 = getXYNeighbors(x_tminus1, y_tminus1);
 		Tuple xt = new Tuple(x_t, y_t);
 		Tuple xtminus1 = new Tuple(x_tminus1, y_tminus1);
@@ -200,6 +180,12 @@ public class Localizer implements EstimatorInterface {
 		
 	}
 	
+	/**
+	 * helper method which calculates the heading from one tuple to the second
+	 * @param xtminus1
+	 * @param xt
+	 * @return
+	 */
 	private Heading headingFromTo(Tuple xtminus1, Tuple xt) {
 		int xDiff = xt.getX() - xtminus1.getX();
 		int yDiff = xt.getY() - xtminus1.getY();
@@ -215,6 +201,9 @@ public class Localizer implements EstimatorInterface {
 		}
 	}
 
+	/**
+	 * Generates the T matrix, only needs to be run once
+	 */
 	private void generateT() {
 		int j = 0;
 		int i = 0;
@@ -240,6 +229,12 @@ public class Localizer implements EstimatorInterface {
 		}
 	}
 	
+	/**
+	 * @param x
+	 * @param y
+	 * @param heading
+	 * @return
+	 */
 	private Tuple nextForwardPos(int x, int y, Heading heading) {
 		switch (heading) {
 		case East:
@@ -262,6 +257,12 @@ public class Localizer implements EstimatorInterface {
 		return new Tuple(x,y);
 	}
 
+	/**
+	 * returns the positions that are reachable in the next step from a given position 
+	 * @param x
+	 * @param y
+	 * @return
+	 */
 	private List<Tuple> getXYNeighbors(int x, int y) {
 		List<Tuple> retList = new ArrayList<Tuple>();
 		for(int i = -1; i <= 1; i++) {
@@ -275,6 +276,13 @@ public class Localizer implements EstimatorInterface {
 		return retList;
 	}
 
+	/**
+	 * calculates the emission probability for all positions given the input sensory position
+	 * returns as an array as follows: {{0,0}N, {0,0}E, {0,0}S, {0,0}W, {0,1}N, ... , {rows-1, cols-1}W}
+	 * @param senseX
+	 * @param senseY
+	 * @return
+	 */
 	private double[] getEmissProb(int senseX, int senseY){
 		double[] emissVec = new double[alpha.length];
 		
@@ -292,7 +300,7 @@ public class Localizer implements EstimatorInterface {
 					}
 					continue;
 				}
-				 List<List<Tuple>> neighbors = getXNeighbors(x, y);
+				 List<List<Tuple>> neighbors = getNeighbors(x, y);
 				 List<Tuple> closest = neighbors.get(0);
 				 List<Tuple> farthest = neighbors.get(1);
 				
@@ -318,7 +326,13 @@ public class Localizer implements EstimatorInterface {
 		return emissVec;
 	}
 
-	private List<List<Tuple>> getXNeighbors(int x, int y) {
+	/**
+	 * Returns a list of the closest AND farthest neighbors of (x,y) using the distance between tuples
+	 * @param x
+	 * @param y
+	 * @return
+	 */
+	private List<List<Tuple>> getNeighbors(int x, int y) {
 		List<Tuple> xClosestN = new ArrayList<Tuple>();
 		List<Tuple> xFarthestN = new ArrayList<Tuple>();
 		for (int i = -2; i <= 2; i++) {
@@ -343,87 +357,4 @@ public class Localizer implements EstimatorInterface {
 		retList.add(xFarthestN);
 		return retList;
 	}
-	private void move(){
-			heading = calculateNextHeading();
-		
-		switch (heading) {
-			case North:
-			// moving right
-				truePos.addX(-1);
-				break;
-			case East:
-			//moving down
-				truePos.addY(1);
-				break;
-			case South:
-			//moving left
-				truePos.addX(1);
-				break;
-			case West:
-			//moving up
-				truePos.addY(-1);
-				break;
-		}
-	}
-
-	private boolean checkWallInCurrHeading(Heading heading) {
-		
-		switch (heading) {
-		case East:
-		// moving right
-			if (truePos.getY() + 1 > cols - 1)
-				return true;
-			break;
-		case South:
-		//moving down
-			if (truePos.getX() + 1 > rows - 1)
-				return true;
-			break;
-		case West:
-		//moving left
-			if (truePos.getY() - 1 < 0)
-				return true;
-			break;
-		case North:
-		//moving up
-			if (truePos.getX() - 1 < 0)
-				return true;
-			break;
-		}
-		return false;
-		
-	}
-
-	private Heading calculateNextHeading() {
-		Heading nextHeading = heading;
-		
-		float randDir = rand.nextFloat();
-		if (randDir < 0.3) {
-				nextHeading = Heading.values()[rand.nextInt(4)];		
-		}
-		if(checkWallInCurrHeading(nextHeading)) {
-			return calculateNextHeading();
-		}
-		return nextHeading;	
-		
-//		if (wall) {
-//			while (heading == nextHeading) {
-//				nextHeading = rand.nextInt(head);
-//			}
-//		} else {
-//			float randDir = rand.nextFloat();
-//			if(randDir < 0.3) {
-//				while (nextHeading == heading) {
-//					nextHeading = rand.nextInt(head);
-//				}
-//			}
-//		}
-//		
-//		return nextHeading;
-		
-	}
-
-//	private boolean nextToWall() {
-//		 return (truePos[0] == 0 || truePos[0] == (rows - 1) || truePos[1] == 0 || truePos[1] == cols);
-//	}
 }
