@@ -22,6 +22,7 @@ public class Localizer implements EstimatorInterface {
 	private double[] alpha;
 	private double[][] T;
 	private double[][] bigO;
+	private double[][] bigAlpha;
 
 	public Localizer( int rows, int cols, int head) {
 		this.rows = rows;
@@ -44,6 +45,11 @@ public class Localizer implements EstimatorInterface {
 		generateBigO();
 	}	
 	
+	private void generateBigAlpha() {
+		// TODO Auto-generated method stub
+		
+	}
+
 	private void generateBigO() {
 		for (int x = 0; x < (rows); x++) {
 			for (int y = 0; y < cols; y++) {
@@ -71,8 +77,7 @@ public class Localizer implements EstimatorInterface {
 	}
 
 	public double getOrXY( int rX, int rY, int x, int y, int h) {
-		//Implement this!
-		return 0.1;
+		return bigO[rows*rX + rY][head*rows*x + 4*y + h];		
 	}
 
 
