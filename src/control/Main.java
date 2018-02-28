@@ -10,8 +10,8 @@ public class Main {
 	 * ...
 	 */
 	
-	final static int ROWS = 10;
-	final static int COLS = 10;
+	final static int ROWS = 8;
+	final static int COLS = 8;
 	final static int HEAD = 4;
 	
 	public static void main( String[] args) {
