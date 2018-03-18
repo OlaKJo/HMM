@@ -58,7 +58,11 @@ public class Localizer implements EstimatorInterface {
 	}
 
 	public double getOrXY(int rX, int rY, int x, int y, int h) {
-		return bigO[rows * rX + rY][head * rows * x + 4 * y + h];
+		if(rX != -1) {
+			return bigO[rows * rX + rY][head * rows * x + 4 * y + h];
+		} else {
+			return bigO[bigO.length - 1][head * rows * x + 4 * y + h];
+		}
 	}
 
 	public int[] getCurrentTruePosition() {
